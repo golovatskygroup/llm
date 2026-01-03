@@ -1,0 +1,45 @@
+# Claude Code Hooks Configuration
+# Language: Node.js / TypeScript
+LANGUAGE="node"
+
+# Format: Biome (20x faster than Prettier)
+# Install: npm install --save-dev @biomejs/biome
+# Alternative: FORMAT_CMD="prettier --write ."
+FORMAT_CMD="npx biome format --write ."
+
+# Imports: handled by Biome/ESLint
+IMPORTS_CMD=""
+
+# Build: TypeScript compilation (if applicable)
+# Skip if pure JavaScript: BUILD_CMD=""
+BUILD_CMD="npx tsc --noEmit"
+
+# Vet: not applicable for JS/TS
+VET_CMD=""
+
+# Lint: Biome (includes ESLint rules)
+# Install: npm install --save-dev @biomejs/biome
+# Alternative: LINT_CMD="npx eslint ."
+LINT_CMD="npx biome lint ."
+
+# Type check: TypeScript
+# Skip if pure JavaScript: TYPE_CMD=""
+TYPE_CMD="npx tsc --noEmit"
+
+# Tests: npm test (uses package.json scripts)
+# Alternative: TEST_CMD="npx vitest run" or TEST_CMD="npx jest"
+TEST_CMD="npm test"
+
+# Scoring weights (total: 100)
+FORMAT_WEIGHT=10
+BUILD_WEIGHT=30
+VET_WEIGHT=0
+LINT_WEIGHT=20
+TYPE_WEIGHT=20
+TEST_WEIGHT=20
+
+# Threshold to pass quality gate (percentage)
+THRESHOLD=80
+
+# Custom protected files
+# CUSTOM_PROTECTED_FILES=("package-lock.json" "yarn.lock")

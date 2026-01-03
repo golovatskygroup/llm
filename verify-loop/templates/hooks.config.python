@@ -1,0 +1,46 @@
+# Claude Code Hooks Configuration
+# Language: Python
+LANGUAGE="python"
+
+# Format: Ruff (100x faster than Black, includes import sorting)
+# Install: pip install ruff
+# Alternative: FORMAT_CMD="black ."
+FORMAT_CMD="ruff format ."
+
+# Imports: handled by ruff format (includes isort functionality)
+IMPORTS_CMD=""
+
+# Build: not applicable for Python (interpreted)
+BUILD_CMD=""
+
+# Vet: not applicable for Python
+VET_CMD=""
+
+# Lint: Ruff (replaces Flake8, pylint, isort, pyupgrade, autoflake)
+# Install: pip install ruff
+# Alternative: LINT_CMD="flake8 ."
+LINT_CMD="ruff check ."
+
+# Type check: Mypy
+# Install: pip install mypy
+# Alternative: TYPE_CMD="pyright ."
+TYPE_CMD="mypy ."
+
+# Tests: pytest
+# Install: pip install pytest
+# Alternative: TEST_CMD="python -m unittest discover"
+TEST_CMD="pytest"
+
+# Scoring weights (total: 80)
+FORMAT_WEIGHT=10
+BUILD_WEIGHT=0
+VET_WEIGHT=0
+LINT_WEIGHT=30
+TYPE_WEIGHT=20
+TEST_WEIGHT=20
+
+# Threshold to pass quality gate (percentage)
+THRESHOLD=80
+
+# Custom protected files
+# CUSTOM_PROTECTED_FILES=("poetry.lock" "Pipfile.lock")

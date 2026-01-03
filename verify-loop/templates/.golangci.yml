@@ -1,0 +1,82 @@
+# golangci-lint configuration
+# Documentation: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  # Skip vendor, generated code
+  skip-dirs:
+    - vendor
+    - third_party
+    - generated
+
+linters:
+  # Disable all linters first, then enable specific ones
+  disable-all: true
+  enable:
+    # Default linters (recommended baseline)
+    - staticcheck    # Comprehensive static analysis
+    - gosimple       # Simplify code
+    - govet          # Suspicious constructs
+    - errcheck       # Unchecked errors
+    - ineffassign    # Ineffective assignments
+    - typecheck      # Type checking
+
+    # Security
+    - gosec          # Security issues
+
+    # Style & consistency
+    - revive         # Fast, configurable linter (replaces golint)
+    - misspell       # Spelling mistakes
+
+    # Code quality
+    - unconvert      # Unnecessary type conversions
+    - unparam        # Unused function parameters
+    - unused         # Unused code
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    enable-all: true
+
+  revive:
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (covered by errcheck)
+
+issues:
+  # Show all issues
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  # Exclude some linters from running on tests
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
