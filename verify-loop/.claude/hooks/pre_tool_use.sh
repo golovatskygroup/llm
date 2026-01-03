@@ -1,47 +1,28 @@
 #!/usr/bin/env bash
 # .claude/hooks/pre_tool_use.sh
 # Security guard: blocks dangerous commands before execution
-# Language-agnostic version
 
 set -euo pipefail
 
 TOOL_TYPE="${1:-unknown}"
 
-# Load config if exists
+# Load config
 CONFIG_FILE=".claude/hooks.config"
-if [[ -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-fi
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
-# Default protected files (can be extended in hooks.config)
-DEFAULT_PROTECTED_FILES=(
-    ".env"
-    ".env.local"
-    ".env.production"
-    ".env.secret"
-    ".env.*"
-    ".git/config"
-    ".git/HEAD"
-    "id_rsa"
-    "id_ed25519"
-    "*.pem"
-    "*.key"
-    "secrets.yaml"
-    "secrets.json"
-    "credentials.json"
-    "*.tfstate"
-    "*.tfstate.backup"
+# Protected files (can be extended via CUSTOM_PROTECTED_FILES in config)
+PROTECTED_FILES=(
+    ".env" ".env.local" ".env.production" ".env.secret" ".env.*"
+    ".git/config" ".git/HEAD" "id_rsa" "id_ed25519"
+    "*.pem" "*.key" "secrets.yaml" "secrets.json" "credentials.json"
+    "*.tfstate" "*.tfstate.backup"
+    ${CUSTOM_PROTECTED_FILES:-}
 )
 
-# Merge with custom protected files from config
-PROTECTED_FILES=("${DEFAULT_PROTECTED_FILES[@]}" ${CUSTOM_PROTECTED_FILES:-})
-
-# Read tool input from environment or stdin
+# Read tool input
 read_tool_input() {
     local input="${CLAUDE_TOOL_INPUT:-}"
-    if [[ -z "$input" ]]; then
-        input=$(cat 2>/dev/null || echo "{}")
-    fi
+    [[ -z "$input" ]] && input=$(cat 2>/dev/null || echo "{}")
     echo "$input"
 }
 
@@ -51,49 +32,26 @@ guard_bash() {
     local cmd=$(echo "$input" | jq -r '.command // ""' 2>/dev/null || echo "")
 
     # Blocked dangerous commands
-    local blocked_commands=(
-        "rm -rf"
-        "rm -fr"
-        "rm -r /"
-        "sudo"
-        "chmod 777"
-        "chmod -R 777"
-        "mv .git"
-        "rm .git"
-        "rm -rf .git"
-        "git push --force"
-        "git push -f"
-        "git reset --hard"
-        "git clean -fd"
-        "> /dev"
-        "dd if="
-        "mkfs"
-        "fdisk"
-        "shutdown"
-        "reboot"
-        "init 0"
-        "curl | sh"
-        "wget | sh"
-        "curl | bash"
-        "wget | bash"
-        "curl -s | sh"
-        "wget -q | sh"
+    local blocked=(
+        "rm -rf" "rm -fr" "rm -r /" "sudo" "chmod 777" "chmod -R 777"
+        "mv .git" "rm .git" "rm -rf .git"
+        "git push --force" "git push -f" "git reset --hard" "git clean -fd"
+        "> /dev" "dd if=" "mkfs" "fdisk" "shutdown" "reboot" "init 0"
+        "curl | sh" "wget | sh" "curl | bash" "wget | bash" "curl -s | sh" "wget -q | sh"
     )
 
-    for blocked in "${blocked_commands[@]}"; do
-        if echo "$cmd" | grep -qi "$blocked"; then
-            echo "{\"decision\": \"block\", \"reason\": \"Blocked dangerous command: $blocked\"}"
+    for pattern in "${blocked[@]}"; do
+        if echo "$cmd" | grep -qi "$pattern"; then
+            echo "{\"decision\":\"block\",\"reason\":\"Blocked: $pattern\"}"
             return 2
         fi
     done
 
-    # Block piped shell execution patterns
+    # Block piped shell execution
     if echo "$cmd" | grep -qE "(curl|wget).*\|.*(sh|bash)"; then
-        echo "{\"decision\": \"block\", \"reason\": \"Blocked piped shell execution\"}"
+        echo "{\"decision\":\"block\",\"reason\":\"Blocked piped shell execution\"}"
         return 2
     fi
-
-    return 0
 }
 
 # Guard for file editing
@@ -104,48 +62,29 @@ guard_edit() {
     for pattern in "${PROTECTED_FILES[@]}"; do
         case "$file" in
             $pattern|*/$pattern)
-                echo "{\"decision\": \"block\", \"reason\": \"Protected file: $file cannot be modified directly\"}"
-                return 2
-                ;;
+                echo "{\"decision\":\"block\",\"reason\":\"Protected file: $file\"}"
+                return 2 ;;
         esac
     done
 
-    # Block vendor/node_modules directories
-    if [[ "$file" == vendor/* ]] || [[ "$file" == */vendor/* ]]; then
-        echo "{\"decision\": \"block\", \"reason\": \"Vendor directory is read-only. Use package manager to update.\"}"
+    # Block vendor/node_modules
+    if [[ "$file" == vendor/* ]] || [[ "$file" == */vendor/* ]] || \
+       [[ "$file" == node_modules/* ]] || [[ "$file" == */node_modules/* ]]; then
+        echo "{\"decision\":\"block\",\"reason\":\"Dependencies dir is read-only\"}"
         return 2
     fi
-
-    if [[ "$file" == node_modules/* ]] || [[ "$file" == */node_modules/* ]]; then
-        echo "{\"decision\": \"block\", \"reason\": \"node_modules is read-only. Use npm/yarn to manage dependencies.\"}"
-        return 2
-    fi
-
-    return 0
 }
 
-# Main
 main() {
     local input=$(read_tool_input)
 
     case "$TOOL_TYPE" in
-        bash)
-            guard_bash "$input"
-            ;;
-        edit)
-            guard_edit "$input"
-            ;;
-        *)
-            # Unknown tool type - allow
-            ;;
+        bash) guard_bash "$input" ;;
+        edit) guard_edit "$input" ;;
     esac
 
     local exit_code=$?
-
-    if [[ $exit_code -eq 0 ]]; then
-        echo "{\"decision\": \"allow\"}"
-    fi
-
+    [[ $exit_code -eq 0 ]] && echo "{\"decision\":\"allow\"}"
     exit $exit_code
 }
 

@@ -1,191 +1,97 @@
 #!/usr/bin/env bash
 # .claude/hooks/post_tool_use.sh
 # Auto-format files after edit and run quick checks
-# Language-agnostic with auto-detection
 
 set -euo pipefail
 
 MEMORY_DIR=".claude/memory"
 ERRORS_LOG="$MEMORY_DIR/errors.log"
-
 mkdir -p "$MEMORY_DIR"
 
-# Load config if exists
+# Load config
 CONFIG_FILE=".claude/hooks.config"
-if [[ -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-fi
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+# Helper: check if command exists
+cmd_exists() { command -v "$1" &>/dev/null; }
 
 # Get modified files from environment
 get_modified_files() {
     local files="${CLAUDE_FILE_PATHS:-}"
-
     if [[ -z "$files" ]]; then
         local output="${CLAUDE_TOOL_OUTPUT:-}"
-        if [[ -n "$output" ]]; then
-            files=$(echo "$output" | jq -r '.file_path // .path // ""' 2>/dev/null || echo "")
-        fi
+        [[ -n "$output" ]] && files=$(echo "$output" | jq -r '.file_path // .path // ""' 2>/dev/null || echo "")
     fi
-
     echo "$files"
 }
 
-# Detect file language from extension
-detect_language() {
-    local file="$1"
-    case "$file" in
-        *.go)
-            echo "go"
-            ;;
-        *.py)
-            echo "python"
-            ;;
-        *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
-            echo "node"
-            ;;
-        *.json)
-            echo "json"
-            ;;
-        *)
-            echo "unknown"
-            ;;
+# Detect file language
+detect_lang() {
+    case "$1" in
+        *.go) echo "go" ;;
+        *.py) echo "python" ;;
+        *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs) echo "node" ;;
+        *.json) echo "json" ;;
+        *) echo "unknown" ;;
     esac
 }
 
-# Format Go files
-format_go() {
-    local file="$1"
-    local formatted=0
+# Format a single file based on language
+format_file() {
+    local file="$1" lang="$2"
+    [[ ! -f "$file" ]] && return 1
 
-    if [[ -f "$file" ]]; then
-        # gofmt
-        if command -v gofmt &>/dev/null; then
-            if gofmt -w "$file" 2>/dev/null; then
-                ((formatted++)) || true
+    case "$lang" in
+        go)
+            cmd_exists gofmt && gofmt -w "$file" 2>/dev/null
+            cmd_exists goimports && goimports -w "$file" 2>/dev/null
+            ;;
+        python)
+            if cmd_exists ruff; then
+                ruff format "$file" 2>/dev/null
+                ruff check --fix "$file" 2>/dev/null || true
+            elif cmd_exists black; then
+                black --quiet "$file" 2>/dev/null
+                cmd_exists isort && isort --quiet "$file" 2>/dev/null
             fi
-        fi
-
-        # goimports (if available)
-        if command -v goimports &>/dev/null; then
-            goimports -w "$file" 2>/dev/null || true
-        fi
-    fi
-
-    echo "$formatted"
+            ;;
+        node|json)
+            if cmd_exists biome; then
+                biome format --write "$file" 2>/dev/null
+            elif cmd_exists prettier; then
+                prettier --write "$file" 2>/dev/null
+            elif cmd_exists npx; then
+                npx prettier --write "$file" 2>/dev/null
+            fi
+            ;;
+    esac
+    return 0
 }
 
-# Format Python files
-format_python() {
-    local file="$1"
-    local formatted=0
-
-    if [[ -f "$file" ]]; then
-        # Prefer ruff (faster)
-        if command -v ruff &>/dev/null; then
-            ruff format "$file" 2>/dev/null && ((formatted++)) || true
-            ruff check --fix "$file" 2>/dev/null || true
-        # Fallback to black
-        elif command -v black &>/dev/null; then
-            black --quiet "$file" 2>/dev/null && ((formatted++)) || true
-        fi
-
-        # isort for imports (if available and ruff not used)
-        if ! command -v ruff &>/dev/null && command -v isort &>/dev/null; then
-            isort --quiet "$file" 2>/dev/null || true
-        fi
-    fi
-
-    echo "$formatted"
-}
-
-# Format Node/JS/TS files
-format_node() {
-    local file="$1"
-    local formatted=0
-
-    if [[ -f "$file" ]]; then
-        # Prefer biome (faster)
-        if command -v biome &>/dev/null; then
-            biome format --write "$file" 2>/dev/null && ((formatted++)) || true
-        # Fallback to prettier
-        elif command -v prettier &>/dev/null; then
-            prettier --write "$file" 2>/dev/null && ((formatted++)) || true
-        # Fallback to npx prettier
-        elif command -v npx &>/dev/null; then
-            npx prettier --write "$file" 2>/dev/null && ((formatted++)) || true
-        fi
-    fi
-
-    echo "$formatted"
-}
-
-# Format JSON files
-format_json() {
-    local file="$1"
-    local formatted=0
-
-    if [[ -f "$file" ]]; then
-        if command -v biome &>/dev/null; then
-            biome format --write "$file" 2>/dev/null && ((formatted++)) || true
-        elif command -v prettier &>/dev/null; then
-            prettier --write "$file" 2>/dev/null && ((formatted++)) || true
-        fi
-    fi
-
-    echo "$formatted"
-}
-
-# Format files based on language
+# Format all files
 format_files() {
-    local files="$1"
-    local total_formatted=0
+    local files="$1" formatted=0
 
     for file in $files; do
-        if [[ ! -f "$file" ]]; then
-            continue
-        fi
-
-        local lang=$(detect_language "$file")
-        local formatted=0
-
-        case "$lang" in
-            go)
-                formatted=$(format_go "$file")
-                ;;
-            python)
-                formatted=$(format_python "$file")
-                ;;
-            node)
-                formatted=$(format_node "$file")
-                ;;
-            json)
-                formatted=$(format_json "$file")
-                ;;
-        esac
-
-        total_formatted=$((total_formatted + formatted))
+        [[ ! -f "$file" ]] && continue
+        local lang=$(detect_lang "$file")
+        format_file "$file" "$lang" && ((formatted++)) || true
     done
 
     # Handle package manager files
     if echo "$files" | grep -q "go.mod"; then
-        if command -v go &>/dev/null; then
-            go mod tidy 2>/dev/null || true
-        fi
+        cmd_exists go && go mod tidy 2>/dev/null || true
     fi
-
     if echo "$files" | grep -q "package.json"; then
-        # Don't auto-run npm install - just note it
-        echo "[$(date -Iseconds)] package.json modified - consider running npm install" >> "$ERRORS_LOG"
+        echo "[$(date -Iseconds)] package.json modified - consider npm install" >> "$ERRORS_LOG"
     fi
 
-    echo "$total_formatted"
+    echo "$formatted"
 }
 
-# Quick build check based on language
+# Quick build check
 run_quick_build() {
-    local files="$1"
-    local has_go=false
-    local has_ts=false
+    local files="$1" has_go=false has_ts=false
 
     for file in $files; do
         case "$file" in
@@ -194,61 +100,44 @@ run_quick_build() {
         esac
     done
 
-    # Go build check
-    if [[ "$has_go" == "true" ]] && command -v go &>/dev/null; then
-        local build_output
-        local build_exit=0
-        build_output=$(go build ./... 2>&1) || build_exit=$?
-        if [[ $build_exit -ne 0 ]]; then
-            echo "[$(date -Iseconds)] Quick build check failed: $build_output" >> "$ERRORS_LOG"
-            echo "$build_output"
+    if [[ "$has_go" == "true" ]] && cmd_exists go; then
+        local output exit_code=0
+        output=$(go build ./... 2>&1) || exit_code=$?
+        if [[ $exit_code -ne 0 ]]; then
+            echo "[$(date -Iseconds)] Build failed: $output" >> "$ERRORS_LOG"
+            echo "$output"
             return 1
         fi
     fi
 
-    # TypeScript type check (quick)
-    if [[ "$has_ts" == "true" ]] && command -v tsc &>/dev/null; then
-        local tsc_output
-        tsc_output=$(tsc --noEmit 2>&1) || true
-        # Don't fail on TS errors in post-hook, just log
-        if [[ -n "$tsc_output" ]]; then
-            echo "[$(date -Iseconds)] TypeScript warnings: $tsc_output" >> "$ERRORS_LOG"
-        fi
+    if [[ "$has_ts" == "true" ]] && cmd_exists tsc; then
+        local output
+        output=$(tsc --noEmit 2>&1) || true
+        [[ -n "$output" ]] && echo "[$(date -Iseconds)] TS warnings: $output" >> "$ERRORS_LOG"
     fi
-
-    return 0
 }
 
-# Main
 main() {
     local files=$(get_modified_files)
 
-    # Skip if no files
     if [[ -z "$files" ]]; then
-        echo "{\"status\": \"skipped\", \"reason\": \"No files to process\"}"
+        echo '{"status":"skipped","reason":"No files"}'
         exit 0
     fi
 
-    # Format files
     local formatted=$(format_files "$files")
+    local build_status="ok" build_error=""
 
-    # Quick build check
-    local build_status="ok"
-    local build_error=""
     if ! build_error=$(run_quick_build "$files"); then
         build_status="warning"
     fi
 
-    # Output result
     if [[ "$build_status" == "ok" ]]; then
-        echo "{\"status\": \"ok\", \"formatted\": $formatted}"
+        echo "{\"status\":\"ok\",\"formatted\":$formatted}"
     else
-        # Escape build error for JSON
-        local escaped_error=$(echo "$build_error" | head -c 200 | tr '\n' ' ' | sed 's/"/\\"/g')
-        echo "{\"status\": \"warning\", \"formatted\": $formatted, \"build_note\": \"$escaped_error\"}"
+        local escaped=$(echo "$build_error" | head -c 200 | tr '\n' ' ' | sed 's/"/\\"/g')
+        echo "{\"status\":\"warning\",\"formatted\":$formatted,\"build_note\":\"$escaped\"}"
     fi
-
-    exit 0
 }
 
 main

@@ -1,176 +1,85 @@
 #!/usr/bin/env bash
 # .claude/scripts/verify_loop.sh
-# Standalone verification script - can be run manually
+# Standalone verification script
 # Usage: .claude/scripts/verify_loop.sh [--quick]
 
 set -euo pipefail
 
 QUICK_MODE=false
-if [[ "${1:-}" == "--quick" ]]; then
-    QUICK_MODE=true
-fi
+[[ "${1:-}" == "--quick" ]] && QUICK_MODE=true
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Colors
+RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
 
 # Load config
 CONFIG_FILE=".claude/hooks.config"
-if [[ -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-else
+if [[ ! -f "$CONFIG_FILE" ]]; then
     echo -e "${RED}Error: No hooks.config found${NC}"
-    echo "Run setup-hooks.sh first or create .claude/hooks.config"
+    echo "Run setup-hooks.sh first"
     exit 1
 fi
+source "$CONFIG_FILE"
 
-print_header() {
-    echo -e "${BLUE}$1${NC}"
-}
-
-print_step() {
-    echo -e "${YELLOW}[STEP]${NC} $1"
-}
-
-print_pass() {
-    echo -e "${GREEN}[PASS]${NC} $1"
-}
-
-print_fail() {
-    echo -e "${RED}[FAIL]${NC} $1"
-}
-
-print_skip() {
-    echo -e "${YELLOW}[SKIP]${NC} $1"
-}
-
-# Run a single check
-run_single_check() {
-    local name="$1"
-    local cmd="$2"
-    local output
-    local exit_code=0
-
+run_check() {
+    local name="$1" cmd="$2" output exit_code=0
     if [[ -z "$cmd" ]]; then
-        print_skip "$name (not configured)"
-        return 0
+        echo -e "${YELLOW}[SKIP]${NC} $name (not configured)"
+        return 2
     fi
-
-    print_step "$name"
-
+    echo -e "${YELLOW}[STEP]${NC} $name"
     output=$(eval "$cmd" 2>&1) || exit_code=$?
-
     if [[ $exit_code -eq 0 ]]; then
-        print_pass "$name"
+        echo -e "${GREEN}[PASS]${NC} $name"
         return 0
     else
-        print_fail "$name"
+        echo -e "${RED}[FAIL]${NC} $name"
         echo "$output" | head -30
         return 1
     fi
 }
 
 main() {
-    local failed=0
-    local passed=0
-    local skipped=0
+    local passed=0 failed=0 skipped=0
 
     echo "============================================="
-    print_header "       QUALITY VERIFICATION LOOP"
+    echo -e "${BLUE}       QUALITY VERIFICATION LOOP${NC}"
     echo "============================================="
     echo ""
     echo "Language: ${LANGUAGE:-unknown}"
     echo ""
 
-    # 1. Format check
-    if [[ -n "${FORMAT_CMD:-}" ]]; then
-        if run_single_check "Format Check" "$FORMAT_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-            echo "  Hint: Run the format command to fix"
-        fi
-    else
-        ((skipped++))
-        print_skip "Format Check (not configured)"
-    fi
-    echo ""
+    # Check definitions: NAME|CMD_VAR
+    local checks="Format Check|FORMAT_CMD Build Check|BUILD_CMD Static Analysis|VET_CMD Lint Check|LINT_CMD Type Check|TYPE_CMD"
 
-    # 2. Build
-    if [[ -n "${BUILD_CMD:-}" ]]; then
-        if run_single_check "Build Check" "$BUILD_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-        fi
-    else
-        ((skipped++))
-        print_skip "Build Check (not configured)"
-    fi
-    echo ""
+    for check in $checks; do
+        IFS='|' read -r name cmd_var <<< "$check"
+        local cmd="${!cmd_var:-}"
+        local result=0
+        run_check "$name" "$cmd" || result=$?
+        case $result in
+            0) ((passed++)) ;;
+            1) ((failed++)) ;;
+            2) ((skipped++)) ;;
+        esac
+        echo ""
+    done
 
-    # 3. Vet/Static analysis
-    if [[ -n "${VET_CMD:-}" ]]; then
-        if run_single_check "Static Analysis (vet)" "$VET_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-        fi
-    else
-        ((skipped++))
-        print_skip "Static Analysis (not configured)"
-    fi
-    echo ""
-
-    # 4. Lint
-    if [[ -n "${LINT_CMD:-}" ]]; then
-        if run_single_check "Lint Check" "$LINT_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-        fi
-    else
-        ((skipped++))
-        print_skip "Lint Check (not configured)"
-    fi
-    echo ""
-
-    # 5. Type check
-    if [[ -n "${TYPE_CMD:-}" ]]; then
-        if run_single_check "Type Check" "$TYPE_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-        fi
-    else
-        ((skipped++))
-        print_skip "Type Check (not configured)"
-    fi
-    echo ""
-
-    # 6. Tests (skip in quick mode)
+    # Tests (skip in quick mode)
     if [[ "$QUICK_MODE" == "true" ]]; then
-        print_skip "Tests (SKIPPED - quick mode)"
-        echo ""
-    elif [[ -n "${TEST_CMD:-}" ]]; then
-        if run_single_check "Tests" "$TEST_CMD"; then
-            ((passed++))
-        else
-            ((failed++))
-        fi
+        echo -e "${YELLOW}[SKIP]${NC} Tests (quick mode)"
         echo ""
     else
-        ((skipped++))
-        print_skip "Tests (not configured)"
+        local result=0
+        run_check "Tests" "${TEST_CMD:-}" || result=$?
+        case $result in
+            0) ((passed++)) ;;
+            1) ((failed++)) ;;
+            2) ((skipped++)) ;;
+        esac
         echo ""
     fi
 
     echo "============================================="
-
-    local total=$((passed + failed))
     if [[ $failed -eq 0 ]]; then
         echo -e "${GREEN}ALL CHECKS PASSED${NC} ($passed passed, $skipped skipped)"
         echo "============================================="
